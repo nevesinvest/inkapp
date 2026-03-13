@@ -1,6 +1,5 @@
 process.env.TZ = process.env.TZ || "America/Sao_Paulo";
 
-const app = require("./app");
 const { PORT } = require("./config/env");
 const { migrate } = require("./db/migrate");
 const { seedDatabase } = require("./db/seed");
@@ -11,6 +10,8 @@ const seedResult = seedDatabase();
 if (seedResult.seeded) {
   console.log("Banco inicializado com dados de exemplo.");
 }
+
+const app = require("./app");
 
 try {
   const result = autoCloseExpiredCashSessions();
