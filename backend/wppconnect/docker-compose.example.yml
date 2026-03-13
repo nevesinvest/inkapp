@@ -1,0 +1,18 @@
+services:
+  wppconnect:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${WPP_CONNECT_BASE_IMAGE}
+        WPP_CONNECT_SERVER_VERSION: ${WPP_CONNECT_SERVER_VERSION}
+    image: ${WPP_CONNECT_IMAGE}
+    container_name: inkapp-wppconnect
+    restart: unless-stopped
+    command:
+      - "--port=21465"
+      - "--secretKey=${WPP_CONNECT_SECRET_KEY}"
+    ports:
+      - "${WPP_CONNECT_PORT}:21465"
+    volumes:
+      - ./wpp-data:/usr/src/wpp-server/tokens

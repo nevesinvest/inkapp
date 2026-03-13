@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.local
+*.log
+.vs/
+.vscode/
+backend/data/
+backend/wppconnect/wpp-data/
+frontend/.vite/
+frontend/dist/
