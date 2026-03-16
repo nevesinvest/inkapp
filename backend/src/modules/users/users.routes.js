@@ -25,8 +25,9 @@ const getArtistByUserStmt = db.prepare(`
   WHERE user_id = ?
 `);
 
-router.get("/", authenticate, requireRoles("gerente"), (req, res) => {
-  const role = req.query.role;
+router.get("/", authenticate, requireRoles("gerente", "tatuador"), (req, res) => {
+  const requestedRole = req.query.role;
+  const role = req.user.role === "tatuador" ? "cliente" : requestedRole;
   const allowedRoles = ["cliente", "tatuador", "gerente"];
   if (role && !allowedRoles.includes(role)) {
     return res.status(400).json({ message: "Role inválida." });

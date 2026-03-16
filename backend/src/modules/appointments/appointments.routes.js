@@ -276,7 +276,7 @@ router.get("/services", (_req, res) => {
   return res.json(services);
 });
 
-router.post("/", authenticate, requireRoles("cliente", "gerente"), (req, res) => {
+router.post("/", authenticate, requireRoles("cliente", "gerente", "tatuador"), (req, res) => {
   const {
     artistId,
     serviceId,
@@ -290,7 +290,7 @@ router.post("/", authenticate, requireRoles("cliente", "gerente"), (req, res) =>
     totalValue
   } = req.body;
 
-  if (!artistId || !serviceId || !startAt) {
+  if ((!artistId && req.user.role !== "tatuador") || !serviceId || !startAt) {
     return badRequest(res, "Campos obrigatorios: artistId, serviceId e startAt.");
   }
   if (!isValidIsoDate(startAt)) {
@@ -316,12 +316,34 @@ router.post("/", authenticate, requireRoles("cliente", "gerente"), (req, res) =>
     return badRequest(res, "Cliente menor de 18 anos: informe o responsavel.");
   }
 
+  const requestedArtistId = Number(artistId);
+  let targetArtistId = requestedArtistId;
+
+  if (req.user.role === "tatuador") {
+    const ownArtistId = getArtistIdForUser(req.user.id);
+    if (!ownArtistId) {
+      return notFound(res, "Perfil de tatuador nao encontrado.");
+    }
+    if (
+      Number.isInteger(requestedArtistId) &&
+      requestedArtistId > 0 &&
+      requestedArtistId !== ownArtistId
+    ) {
+      return forbidden(res);
+    }
+    targetArtistId = ownArtistId;
+  }
+
+  if (!Number.isInteger(targetArtistId) || targetArtistId <= 0) {
+    return badRequest(res, "artistId invalido.");
+  }
+
   const service = getServiceStmt.get(serviceId);
   if (!service || !service.active) {
     return notFound(res, "Servico nao encontrado.");
   }
 
-  const artist = getArtistStmt.get(artistId);
+  const artist = getArtistStmt.get(targetArtistId);
   if (!artist) {
     return notFound(res, "Artista nao encontrado.");
   }
@@ -332,7 +354,7 @@ router.post("/", authenticate, requireRoles("cliente", "gerente"), (req, res) =>
     return badRequest(res, "Horario final precisa ser posterior ao horario inicial.");
   }
 
-  const conflicts = findScheduleConflicts(artistId, start.toISOString(), end.toISOString());
+  const conflicts = findScheduleConflicts(targetArtistId, start.toISOString(), end.toISOString());
   if (conflicts.appointments.length || conflicts.blocks.length) {
     return res.status(409).json({
       message: "Horario indisponivel para o artista selecionado.",
@@ -352,20 +374,23 @@ router.post("/", authenticate, requireRoles("cliente", "gerente"), (req, res) =>
   }
   const resolvedTotalValue = roundMoney(parsedTotalValue);
 
-  let status = resolvedDeposit >= service.deposit_amount ? "confirmed" : "pending";
-  if (req.user.role === "gerente" && requestedStatus !== undefined) {
-    const normalizedStatus = normalizeBookingStatus(requestedStatus);
-    if (!normalizedStatus) {
-      return badRequest(res, "Status invalido.");
+  let status = "pending";
+  if (req.user.role === "gerente") {
+    status = resolvedDeposit >= service.deposit_amount ? "confirmed" : "pending";
+    if (requestedStatus !== undefined) {
+      const normalizedStatus = normalizeBookingStatus(requestedStatus);
+      if (!normalizedStatus) {
+        return badRequest(res, "Status invalido.");
+      }
+      status = normalizedStatus;
     }
-    status = normalizedStatus;
   }
 
   const paymentStatus = resolvedDeposit > 0 ? "paid" : "none";
 
   const appointmentId = createAppointmentStmt.run(
     targetClientId,
-    artistId,
+    targetArtistId,
     serviceId,
     start.toISOString(),
     end.toISOString(),
@@ -399,7 +424,7 @@ router.post("/", authenticate, requireRoles("cliente", "gerente"), (req, res) =>
       "income",
       "sinal agendamento",
       resolvedDeposit,
-      artistId,
+      targetArtistId,
       appointmentId,
       null,
       `Sinal de ${createdAppointment.client_name}`,
@@ -794,7 +819,7 @@ router.get("/:id", authenticate, requireRoles("cliente", "tatuador", "gerente"),
   return res.json(appointment);
 });
 
-router.patch("/:id/status", authenticate, requireRoles("tatuador", "gerente"), (req, res) => {
+router.patch("/:id/status", authenticate, requireRoles("cliente", "tatuador", "gerente"), (req, res) => {
   const appointmentId = Number(req.params.id);
   const { status, cancelReason, refundDeposit, totalValue } = req.body;
 
@@ -806,6 +831,15 @@ router.patch("/:id/status", authenticate, requireRoles("tatuador", "gerente"), (
   const appointment = getAppointmentById(appointmentId);
   if (!appointment) {
     return notFound(res, "Agendamento nao encontrado.");
+  }
+
+  if (req.user.role === "cliente") {
+    if (appointment.client_id !== req.user.id) {
+      return forbidden(res);
+    }
+    if (nextStatus !== "cancelled") {
+      return badRequest(res, "Cliente so pode cancelar o proprio agendamento.");
+    }
   }
 
   if (req.user.role === "tatuador") {
@@ -875,10 +909,20 @@ router.patch("/:id/status", authenticate, requireRoles("tatuador", "gerente"), (
     "pending"
   );
 
+  if (req.user.role === "cliente") {
+    createNotificationStmt.run(
+      "appointment_status",
+      appointment.artist_user_id,
+      `O cliente ${appointment.client_name} cancelou o agendamento #${appointment.id}.`,
+      "app",
+      "pending"
+    );
+  }
+
   return res.json(getAppointmentById(appointmentId));
 });
 
-router.patch("/:id/reschedule", authenticate, requireRoles("tatuador", "gerente"), (req, res) => {
+router.patch("/:id/reschedule", authenticate, requireRoles("cliente", "tatuador", "gerente"), (req, res) => {
   const appointmentId = Number(req.params.id);
   const { startAt, endAt, status, totalValue } = req.body;
 
@@ -892,6 +936,14 @@ router.patch("/:id/reschedule", authenticate, requireRoles("tatuador", "gerente"
   const appointment = getAppointmentById(appointmentId);
   if (!appointment) {
     return notFound(res, "Agendamento nao encontrado.");
+  }
+  if (req.user.role === "cliente") {
+    if (appointment.client_id !== req.user.id) {
+      return forbidden(res);
+    }
+    if (status !== undefined) {
+      return badRequest(res, "Cliente nao pode alterar status ao reagendar.");
+    }
   }
   if (req.user.role === "tatuador") {
     const ownArtistId = getArtistIdForUser(req.user.id);
@@ -943,7 +995,7 @@ router.patch("/:id/reschedule", authenticate, requireRoles("tatuador", "gerente"
     });
   }
 
-  const nextStatus = parsedStatus || "confirmed";
+  const nextStatus = req.user.role === "cliente" ? "pending" : parsedStatus || "confirmed";
 
   db.prepare(
     `
@@ -968,6 +1020,16 @@ router.patch("/:id/reschedule", authenticate, requireRoles("tatuador", "gerente"
     "email",
     "pending"
   );
+
+  if (req.user.role === "cliente") {
+    createNotificationStmt.run(
+      "appointment_rescheduled",
+      appointment.artist_user_id,
+      `O cliente ${appointment.client_name} reagendou para ${newStart.format("DD/MM/YYYY HH:mm")} ate ${newEnd.format("HH:mm")}.`,
+      "app",
+      "pending"
+    );
+  }
 
   return res.json(getAppointmentById(appointmentId));
 });

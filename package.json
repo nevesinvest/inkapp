@@ -5,6 +5,7 @@
   "description": "Sistema de gestão para estúdios de tatuagem e piercing",
   "scripts": {
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "start": "npm run dev",
     "dev": "concurrently \"cross-env PORT=4100 CORS_ORIGIN=http://localhost:3100 npm --prefix backend run dev\" \"cross-env VITE_API_URL=http://localhost:4100/api npm --prefix frontend run dev -- --port 3100\""
   },
   "devDependencies": {

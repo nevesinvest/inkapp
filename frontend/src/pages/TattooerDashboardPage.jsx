@@ -303,6 +303,11 @@ export function TattooerDashboardPage() {
       clientId: Number.isInteger(clientId) && clientId > 0 ? clientId : null
     };
   });
+  const [pendingAppointmentEditId, setPendingAppointmentEditId] = useState(() => {
+    const appointmentId = Number(location.state?.openAppointmentEdit?.appointmentId);
+    if (!Number.isInteger(appointmentId) || appointmentId <= 0) return null;
+    return appointmentId;
+  });
   const rescheduleFormRef = useRef(null);
 
   async function loadData() {
@@ -327,16 +332,48 @@ export function TattooerDashboardPage() {
   }, [token]);
 
   useEffect(() => {
+    if (!token) return undefined;
+
+    const intervalId = setInterval(() => {
+      loadData();
+    }, 10000);
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        loadData();
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [token]);
+
+  useEffect(() => {
     const incomingQuoteId = Number(location.state?.resumeQuoteSchedule?.quoteId);
-    if (!Number.isInteger(incomingQuoteId) || incomingQuoteId <= 0) {
+    const incomingAppointmentId = Number(location.state?.openAppointmentEdit?.appointmentId);
+    const hasIncomingQuote = Number.isInteger(incomingQuoteId) && incomingQuoteId > 0;
+    const hasIncomingAppointment =
+      Number.isInteger(incomingAppointmentId) && incomingAppointmentId > 0;
+
+    if (!hasIncomingQuote && !hasIncomingAppointment) {
       return;
     }
 
-    const incomingClientId = Number(location.state?.resumeQuoteSchedule?.clientId);
-    setResumeScheduleRequest({
-      quoteId: incomingQuoteId,
-      clientId: Number.isInteger(incomingClientId) && incomingClientId > 0 ? incomingClientId : null
-    });
+    if (hasIncomingQuote) {
+      const incomingClientId = Number(location.state?.resumeQuoteSchedule?.clientId);
+      setResumeScheduleRequest({
+        quoteId: incomingQuoteId,
+        clientId: Number.isInteger(incomingClientId) && incomingClientId > 0 ? incomingClientId : null
+      });
+    }
+
+    if (hasIncomingAppointment) {
+      setPendingAppointmentEditId(incomingAppointmentId);
+    }
+
     navigate(
       {
         pathname: location.pathname,
@@ -345,6 +382,23 @@ export function TattooerDashboardPage() {
       { replace: true, state: null }
     );
   }, [location.state, location.pathname, location.search, navigate]);
+
+  useEffect(() => {
+    if (!pendingAppointmentEditId || appointments.length === 0) return;
+
+    const targetAppointment = appointments.find(
+      (appointment) => Number(appointment.id) === Number(pendingAppointmentEditId)
+    );
+
+    if (!targetAppointment) {
+      setError("Agendamento selecionado nao foi encontrado na sua agenda.");
+      setPendingAppointmentEditId(null);
+      return;
+    }
+
+    startReschedule(targetAppointment);
+    setPendingAppointmentEditId(null);
+  }, [pendingAppointmentEditId, appointments]);
 
   async function changeStatus(appointmentId, status) {
     setError("");
@@ -1143,7 +1197,12 @@ export function TattooerDashboardPage() {
           <FeedbackMessage message={success} type="success" />
 
           <section className="panel">
-            <h2>Minha Agenda</h2>
+            <div className="panel-header">
+              <h2>Minha Agenda</h2>
+              <button className="button button-outline small" onClick={loadData} type="button">
+                Atualizar agenda
+              </button>
+            </div>
             <div className="table-wrapper">
               <table>
                 <thead>

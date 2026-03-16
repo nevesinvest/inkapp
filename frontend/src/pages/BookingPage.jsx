@@ -58,6 +58,8 @@ export function BookingPage() {
   const { token, user } = useAuth();
   const { showAlert, showConfirm } = useDialog();
   const isManager = user?.role === "gerente";
+  const isTattooer = user?.role === "tatuador";
+  const isStaff = isManager || isTattooer;
   const [searchParams] = useSearchParams();
 
   const dateFromQuery = searchParams.get("date");
@@ -69,6 +71,7 @@ export function BookingPage() {
   const [artists, setArtists] = useState([]);
   const [services, setServices] = useState([]);
   const [clients, setClients] = useState([]);
+  const [ownArtistId, setOwnArtistId] = useState(null);
   const [selfBirthDate, setSelfBirthDate] = useState("");
   const [editingAppointment, setEditingAppointment] = useState(null);
 
@@ -109,8 +112,12 @@ export function BookingPage() {
     () => clients.find((client) => String(client.id) === String(selectedClient)),
     [clients, selectedClient]
   );
-  const activeClientName = isManager ? selectedClientData?.name : user?.name;
-  const activeClientBirthDate = isManager ? selectedClientData?.birth_date : selfBirthDate;
+  const availableArtists = useMemo(() => {
+    if (!isTattooer || !ownArtistId) return artists;
+    return artists.filter((artist) => Number(artist.id) === Number(ownArtistId));
+  }, [artists, isTattooer, ownArtistId]);
+  const activeClientName = isStaff ? selectedClientData?.name : user?.name;
+  const activeClientBirthDate = isStaff ? selectedClientData?.birth_date : selfBirthDate;
   const activeClientAge = useMemo(
     () => getAgeFromBirthDate(activeClientBirthDate),
     [activeClientBirthDate]
@@ -121,9 +128,12 @@ export function BookingPage() {
     async function loadInitialData() {
       try {
         const requests = [api.request("/artists"), api.request("/appointments/services")];
-        if (isManager) {
+        if (isStaff) {
           requests.push(api.request("/users?role=cliente", { token }));
         } else {
+          requests.push(api.request("/users/me", { token }));
+        }
+        if (isTattooer) {
           requests.push(api.request("/users/me", { token }));
         }
         if (isEditMode) {
@@ -138,7 +148,7 @@ export function BookingPage() {
         setArtists(artistsData);
         setServices(servicesData);
 
-        if (isManager) {
+        if (isStaff) {
           const clientsData = response[responseIndex];
           responseIndex += 1;
           setClients(clientsData);
@@ -146,6 +156,13 @@ export function BookingPage() {
           const meData = response[responseIndex];
           responseIndex += 1;
           setSelfBirthDate(meData.birth_date || meData.clientProfile?.birthDate || "");
+        }
+
+        if (isTattooer) {
+          const meData = response[responseIndex];
+          responseIndex += 1;
+          const artistIdFromProfile = Number(meData?.artistId || 0);
+          setOwnArtistId(Number.isInteger(artistIdFromProfile) && artistIdFromProfile > 0 ? artistIdFromProfile : null);
         }
 
         if (isEditMode) {
@@ -177,7 +194,7 @@ export function BookingPage() {
       setLoadingEdit(true);
     }
     loadInitialData();
-  }, [isManager, token, isEditMode, appointmentIdFromQuery]);
+  }, [isStaff, isTattooer, token, isEditMode, appointmentIdFromQuery]);
 
   useEffect(() => {
     if (!isEditMode && selectedServiceData) {
@@ -188,14 +205,19 @@ export function BookingPage() {
   }, [selectedServiceData, isEditMode]);
 
   useEffect(() => {
-    if (!isManager || isEditMode || !selectedServiceData || !manualStartAt) return;
+    if (!isTattooer || !ownArtistId || isEditMode) return;
+    setSelectedArtist(String(ownArtistId));
+  }, [isTattooer, ownArtistId, isEditMode]);
+
+  useEffect(() => {
+    if (!isStaff || isEditMode || !selectedServiceData || !manualStartAt) return;
     const startAtIso = dateTimeLocalSaoPauloToIso(manualStartAt);
     if (!startAtIso) return;
     const endDate = new Date(
       new Date(startAtIso).getTime() + selectedServiceData.duration_minutes * 60 * 1000
     );
     setManualEndAt(isoToDateTimeLocalSaoPaulo(endDate));
-  }, [isManager, isEditMode, manualStartAt, selectedServiceData]);
+  }, [isStaff, isEditMode, manualStartAt, selectedServiceData]);
 
   useEffect(() => {
     if (!isActiveClientMinor) {
@@ -205,7 +227,7 @@ export function BookingPage() {
 
   useEffect(() => {
     async function loadAvailability() {
-      if (isManager) return;
+      if (isStaff) return;
       if (!selectedArtist || !selectedServiceData || !selectedDate) {
         setSlots([]);
         return;
@@ -230,7 +252,7 @@ export function BookingPage() {
     }
 
     loadAvailability();
-  }, [isManager, selectedArtist, selectedServiceData, selectedDate]);
+  }, [isStaff, selectedArtist, selectedServiceData, selectedDate]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -259,7 +281,7 @@ export function BookingPage() {
         });
       }
 
-      if (isManager) {
+      if (isStaff) {
         const startAt = dateTimeLocalSaoPauloToIso(manualStartAt);
         const endAt = dateTimeLocalSaoPauloToIso(manualEndAt);
         if (!startAt || !endAt) {
@@ -285,17 +307,21 @@ export function BookingPage() {
             throw new Error("Selecione o cliente.");
           }
 
+          const createPayload = {
+            ...basePayload,
+            clientId: Number(selectedClient),
+            startAt,
+            endAt,
+            totalValue: Number(totalValue || 0)
+          };
+          if (isManager) {
+            createPayload.status = status;
+          }
+
           response = await api.request("/appointments", {
             method: "POST",
             token,
-            body: {
-              ...basePayload,
-              clientId: Number(selectedClient),
-              startAt,
-              endAt,
-              status,
-              totalValue: Number(totalValue || 0)
-            }
+            body: createPayload
           });
         }
       } else {
@@ -383,6 +409,8 @@ export function BookingPage() {
               ? "Modo alteração: ajuste o intervalo de horário do agendamento."
               : isManager
                 ? "Selecione tatuador, cliente, serviço e intervalo de horário."
+                : isTattooer
+                  ? "Selecione cliente, serviço e intervalo de horário."
                 : "Escolha tatuador, serviço e um horário disponível."}
           </p>
           {isEditMode ? (
@@ -413,10 +441,10 @@ export function BookingPage() {
                 value={selectedArtist}
                 onChange={(event) => setSelectedArtist(event.target.value)}
                 required
-                disabled={isEditMode}
+                disabled={isEditMode || (isTattooer && Boolean(ownArtistId))}
               >
                 <option value="">Selecione</option>
-                {artists.map((artist) => (
+                {availableArtists.map((artist) => (
                   <option key={artist.id} value={artist.id}>
                     {artist.name} - {artist.style}
                   </option>
@@ -441,7 +469,7 @@ export function BookingPage() {
             </label>
           </div>
 
-          {isManager ? (
+          {isStaff ? (
             <>
               <div className="grid-2">
                 <label>
@@ -476,39 +504,56 @@ export function BookingPage() {
                 </label>
               </div>
 
-              <div className="grid-2">
-                <label>
-                  Status
-                  <select
-                    value={status}
-                    onChange={(event) => {
-                      void handleManagerStatusChange(event.target.value);
-                    }}
-                    disabled={updatingStatus}
-                  >
-                    {BOOKING_STATUS_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {isEditMode ? (
-                    <small className="muted">
-                      {updatingStatus
-                        ? "Atualizando status..."
-                        : "Ao mudar o status, a confirmacao acontece na hora."}
-                    </small>
-                  ) : null}
-                </label>
-                <label>
-                  Valor total (R$)
-                  <CurrencyInput
-                    min={0}
-                    onValueChange={setTotalValue}
-                    value={totalValue}
-                  />
-                </label>
-              </div>
+              {isManager ? (
+                <div className="grid-2">
+                  <label>
+                    Status
+                    <select
+                      value={status}
+                      onChange={(event) => {
+                        void handleManagerStatusChange(event.target.value);
+                      }}
+                      disabled={updatingStatus}
+                    >
+                      {BOOKING_STATUS_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    {isEditMode ? (
+                      <small className="muted">
+                        {updatingStatus
+                          ? "Atualizando status..."
+                          : "Ao mudar o status, a confirmacao acontece na hora."}
+                      </small>
+                    ) : null}
+                  </label>
+                  <label>
+                    Valor total (R$)
+                    <CurrencyInput
+                      min={0}
+                      onValueChange={setTotalValue}
+                      value={totalValue}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="grid-2">
+                  <label>
+                    Status inicial
+                    <input type="text" value="Pendente" readOnly />
+                  </label>
+                  <label>
+                    Valor total (R$)
+                    <CurrencyInput
+                      min={0}
+                      onValueChange={setTotalValue}
+                      value={totalValue}
+                    />
+                  </label>
+                </div>
+              )}
 
               <div className="grid-2">
                 <label>
@@ -557,7 +602,7 @@ export function BookingPage() {
             <div className="service-summary">
               <strong>{selectedServiceData.name}</strong>
               <span>Valor: {formatCurrency(selectedServiceData.price)}</span>
-              {isManager ? <span>Valor total agendamento: {formatCurrency(totalValue)}</span> : null}
+              {isStaff ? <span>Valor total agendamento: {formatCurrency(totalValue)}</span> : null}
               <span>Sinal mínimo recomendado: {formatCurrency(selectedServiceData.deposit_amount)}</span>
             </div>
           ) : null}
@@ -576,7 +621,7 @@ export function BookingPage() {
             </label>
           ) : null}
 
-          {!isManager ? (
+          {!isStaff ? (
             <div>
               <p className="slots-title">Horários disponíveis</p>
               {loadingSlots ? <p>Consultando disponibilidade...</p> : null}

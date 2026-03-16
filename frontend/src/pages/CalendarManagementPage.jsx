@@ -275,9 +275,10 @@ function buildDayEventPlacementMap(dayEvents, day) {
   return placementMap;
 }
 
-export function CalendarManagementPage() {
+export function CalendarManagementPage({ scope = "manager" }) {
   const navigate = useNavigate();
   const { token } = useAuth();
+  const isTattooerScope = scope === "tattooer";
   const [viewMode, setViewMode] = useState(VIEW_WEEK);
   const [cursorDate, setCursorDate] = useState(new Date());
   const [artists, setArtists] = useState([]);
@@ -287,9 +288,16 @@ export function CalendarManagementPage() {
   const [calendarData, setCalendarData] = useState({ appointments: [], blocks: [] });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refreshCounter, setRefreshCounter] = useState(0);
 
   useEffect(() => {
     async function loadArtists() {
+      if (isTattooerScope) {
+        setArtists([]);
+        setSelectedArtistIds([]);
+        return;
+      }
+
       try {
         const data = await api.request("/artists");
         setArtists(data);
@@ -299,12 +307,13 @@ export function CalendarManagementPage() {
       }
     }
     loadArtists();
-  }, []);
+  }, [isTattooerScope]);
 
   useEffect(() => {
     async function loadCalendar() {
-      if (!token || artists.length === 0) return;
-      if (selectedArtistIds.length === 0) {
+      if (!token) return;
+      if (!isTattooerScope && artists.length === 0) return;
+      if (!isTattooerScope && selectedArtistIds.length === 0) {
         setCalendarData({ appointments: [], blocks: [] });
         return;
       }
@@ -315,9 +324,11 @@ export function CalendarManagementPage() {
       try {
         const query = new URLSearchParams({
           from: periodStart,
-          to: periodEnd,
-          artistIds: selectedArtistIds.join(",")
+          to: periodEnd
         });
+        if (!isTattooerScope) {
+          query.set("artistIds", selectedArtistIds.join(","));
+        }
         const data = await api.request(`/appointments/calendar?${query.toString()}`, { token });
         setCalendarData(data);
       } catch (requestError) {
@@ -328,7 +339,15 @@ export function CalendarManagementPage() {
     }
 
     loadCalendar();
-  }, [token, artists.length, selectedArtistIds, periodStart, periodEnd]);
+  }, [token, artists.length, selectedArtistIds, periodStart, periodEnd, refreshCounter, isTattooerScope]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setRefreshCounter((current) => current + 1);
+    }, 30000);
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   const artistColorMap = useMemo(() => {
     const map = new Map();
@@ -387,6 +406,9 @@ export function CalendarManagementPage() {
     artists.length > 0 && selectedArtistIds.length === artists.length;
 
   const bookingLink = useMemo(() => {
+    if (isTattooerScope) {
+      return "/painel-tatuador";
+    }
     const params = new URLSearchParams();
     if (selectedArtistIds.length === 1) {
       params.set("artistId", String(selectedArtistIds[0]));
@@ -399,7 +421,7 @@ export function CalendarManagementPage() {
       params.set("endAt", quickEndIso);
     }
     return `/agendar?${params.toString()}`;
-  }, [selectedArtistIds, referenceDate]);
+  }, [selectedArtistIds, referenceDate, isTattooerScope]);
 
   function toggleAllArtists() {
     if (allArtistsSelected) {
@@ -441,6 +463,21 @@ export function CalendarManagementPage() {
   }
 
   function openEventInBooking(event) {
+    if (isTattooerScope) {
+      if (event.type === "appointment" && event.appointmentId) {
+        navigate("/painel-tatuador", {
+          state: {
+            openAppointmentEdit: {
+              appointmentId: event.appointmentId
+            }
+          }
+        });
+      } else {
+        navigate("/painel-tatuador");
+      }
+      return;
+    }
+
     const params = new URLSearchParams({
       artistId: String(event.artistId),
       date: toDateInputValue(event.start),
@@ -454,6 +491,21 @@ export function CalendarManagementPage() {
   }
 
   function openSlotInBooking(day, hour) {
+    if (isTattooerScope) {
+      const range = getDayRangeAtHour(day, hour);
+      const params = new URLSearchParams({
+        date: toDateInputValue(day),
+        startAt: range.start.toISOString(),
+        endAt: range.end.toISOString()
+      });
+      const ownArtistId = Number(Array.isArray(calendarData?.artistIds) ? calendarData.artistIds[0] : 0);
+      if (Number.isInteger(ownArtistId) && ownArtistId > 0) {
+        params.set("artistId", String(ownArtistId));
+      }
+      navigate(`/agendar?${params.toString()}`);
+      return;
+    }
+
     const range = getDayRangeAtHour(day, hour);
     const params = new URLSearchParams({
       date: toDateInputValue(day),
@@ -491,8 +543,12 @@ export function CalendarManagementPage() {
     <section className="section">
       <div className="container">
         <div className="page-heading">
-          <h1>Agenda Gerencial</h1>
-          <p>Visão diária, semanal e mensal com filtro por período e múltiplos tatuadores.</p>
+          <h1>{isTattooerScope ? "Agenda do Tatuador" : "Agenda Gerencial"}</h1>
+          <p>
+            {isTattooerScope
+              ? "Visualize seus agendamentos em formato calendar e acesse o painel para manutencao."
+              : "Visão diária, semanal e mensal com filtro por período e múltiplos tatuadores."}
+          </p>
         </div>
 
         <FeedbackMessage message={error} type="error" />
@@ -519,33 +575,44 @@ export function CalendarManagementPage() {
               </label>
             </div>
 
-            <div className="calendar-artist-filter">
-              <h3>Tatuadores</h3>
-              <label className="calendar-check-item">
-                <input type="checkbox" checked={allArtistsSelected} onChange={toggleAllArtists} />
-                <span>Todos</span>
-              </label>
-              <div className="calendar-checklist">
-                {artists.map((artist) => (
-                  <label className="calendar-check-item" key={artist.id}>
-                    <input
-                      type="checkbox"
-                      checked={selectedArtistIds.includes(artist.id)}
-                      onChange={() => toggleArtist(artist.id)}
-                    />
-                    <span
-                      className="calendar-artist-dot"
-                      style={{ backgroundColor: (artistColorMap.get(artist.id) || ARTIST_PALETTE[0]).main }}
-                    />
-                    <span>{artist.name}</span>
-                  </label>
-                ))}
+            {!isTattooerScope ? (
+              <div className="calendar-artist-filter">
+                <h3>Tatuadores</h3>
+                <label className="calendar-check-item">
+                  <input type="checkbox" checked={allArtistsSelected} onChange={toggleAllArtists} />
+                  <span>Todos</span>
+                </label>
+                <div className="calendar-checklist">
+                  {artists.map((artist) => (
+                    <label className="calendar-check-item" key={artist.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedArtistIds.includes(artist.id)}
+                        onChange={() => toggleArtist(artist.id)}
+                      />
+                      <span
+                        className="calendar-artist-dot"
+                        style={{ backgroundColor: (artistColorMap.get(artist.id) || ARTIST_PALETTE[0]).main }}
+                      />
+                      <span>{artist.name}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <p className="muted">Exibindo apenas os seus horários.</p>
+            )}
 
             <Link className="button button-primary full" to={bookingLink}>
-              Ir para Agendamento
+              {isTattooerScope ? "Ir para Painel do Tatuador" : "Ir para Agendamento"}
             </Link>
+            <button
+              className="button button-outline full"
+              onClick={() => setRefreshCounter((current) => current + 1)}
+              type="button"
+            >
+              Atualizar agenda
+            </button>
           </aside>
 
           <section className="panel calendar-main">

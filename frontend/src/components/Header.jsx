@@ -55,8 +55,13 @@ const ATTENDANCE_LINKS = [
   { to: "/loja", label: "Loja", icon: "store" }
 ];
 
+const CLIENT_ATTENDANCE_LINKS = [
+  { to: "/meus-agendamentos", label: "Meus Horarios", icon: "calendar" }
+];
+
 const TATTOOER_LINKS = [
-  { to: "/painel-tatuador", label: "Painel Tatuador", icon: "tattooer" }
+  { to: "/painel-tatuador", label: "Painel Tatuador", icon: "tattooer" },
+  { to: "/agenda-tatuador", label: "Agenda", icon: "calendar" }
 ];
 
 const MANAGER_DASHBOARDS_LINKS = [
@@ -96,8 +101,15 @@ const MANAGER_QUICK_LINKS = [
 
 const TATTOOER_QUICK_LINKS = [
   { to: "/painel-tatuador", label: "Painel", icon: "tattooer" },
+  { to: "/agenda-tatuador", label: "Agenda", icon: "calendar" },
   { to: "/cadastros", label: "Cadastros", icon: "registry" },
   { to: "/orcamento", label: "Orcamentos", icon: "quote" }
+];
+
+const CLIENT_QUICK_LINKS = [
+  { to: "/meus-agendamentos", label: "Meus Horarios", icon: "calendar" },
+  { to: "/agendar", label: "Agendar", icon: "calendar" },
+  { to: "/orcamento", label: "Orcamento", icon: "quote" }
 ];
 
 function renderNavGroup({ title, subtitle, icon, links, onNavigate }) {
@@ -150,15 +162,23 @@ export function Header() {
 
   const isManager = user?.role === "gerente";
   const isTattooer = user?.role === "tatuador";
-  const roleLabel = isManager ? "Gerencia" : isTattooer ? "Profissional" : "Atendimento";
-  const quickLinks = isManager ? MANAGER_QUICK_LINKS : isTattooer ? TATTOOER_QUICK_LINKS : PUBLIC_QUICK_LINKS;
+  const isClient = user?.role === "cliente";
+  const roleLabel = isManager ? "Gerencia" : isTattooer ? "Profissional" : isClient ? "Cliente" : "Atendimento";
+  const quickLinks = isManager
+    ? MANAGER_QUICK_LINKS
+    : isTattooer
+      ? TATTOOER_QUICK_LINKS
+      : isClient
+        ? CLIENT_QUICK_LINKS
+        : PUBLIC_QUICK_LINKS;
+  const attendanceLinks = isClient ? [...ATTENDANCE_LINKS, ...CLIENT_ATTENDANCE_LINKS] : ATTENDANCE_LINKS;
 
   const menuGroups = [
     {
       title: "Atendimento",
       subtitle: "Relacionamento e vendas",
       icon: "attendance",
-      links: ATTENDANCE_LINKS
+      links: attendanceLinks
     },
     ...(isTattooer
       ? [

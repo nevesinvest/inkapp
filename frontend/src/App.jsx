@@ -12,6 +12,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { FinancePage } from "./pages/FinancePage";
 import { FinancialSummaryPage } from "./pages/FinancialSummaryPage";
 import { ManagerDashboardPage } from "./pages/ManagerDashboardPage";
+import { MyAppointmentsPage } from "./pages/MyAppointmentsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { QuotesPage } from "./pages/QuotesPage";
 import { RegisterPage } from "./pages/RegisterPage";
@@ -33,8 +34,16 @@ export default function App() {
         <Route
           path="/agendar"
           element={
-            <ProtectedRoute roles={["cliente", "gerente"]}>
+            <ProtectedRoute roles={["cliente", "gerente", "tatuador"]}>
               <BookingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/meus-agendamentos"
+          element={
+            <ProtectedRoute roles={["cliente"]}>
+              <MyAppointmentsPage />
             </ProtectedRoute>
           }
         />
@@ -61,6 +70,14 @@ export default function App() {
           element={
             <ProtectedRoute roles={["gerente"]}>
               <CalendarManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agenda-tatuador"
+          element={
+            <ProtectedRoute roles={["tatuador"]}>
+              <CalendarManagementPage scope="tattooer" />
             </ProtectedRoute>
           }
         />
